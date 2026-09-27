@@ -10,9 +10,70 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download fresh Khanty-Mansiysk weather
+      - name: Build fresh Khanty-Mansiysk weather
         run: |
-          curl -fsSL --retry 3 --connect-timeout 15 -H 'Cache-Control: no-cache' 'https://api.open-meteo.com/v1/forecast?latitude=61.0042&longitude=69.0019&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FYekaterinburg&forecast_days=5' -o weather.json
+          set -e
+          # Current conditions: wttr.in JSON, no account/API key required.
+          # Coordinates are used so geocoding cannot select the wrong city.
+          curl -fsSL --retry 3 --connect-timeout 15 -A 'ipad-panel/1.0' \
+            'https://wttr.in/61.0042,69.0019?format=j1' -o wttr.json
+
+          # Five-day forecast + sunrise/sunset: Open-Meteo.
+          curl -fsSL --retry 3 --connect-timeout 15 -H 'Cache-Control: no-cache' \
+            'https://api.open-meteo.com/v1/forecast?latitude=61.0042&longitude=69.0019&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FYekaterinburg&forecast_days=5' \
+            -o forecast.json
+
+          python3 - <<'PY'
+          import json
+          from datetime import datetime, timezone
+
+          with open('wttr.json', encoding='utf-8') as f:
+              w = json.load(f)
+          with open('forecast.json', encoding='utf-8') as f:
+              o = json.load(f)
+
+          c = w['current_condition'][0]
+          code = int(c.get('weatherCode', 122))
+
+          # wttr/WWO code -> WMO-like groups already understood by the panel.
+          if code == 113:
+              wmo = 0
+          elif code in (116,):
+              wmo = 2
+          elif code in (119,122,143,248,260):
+              wmo = 3
+          elif code in (176,263,266,281,284,293,296,299,302,305,308,311,314,317,320,353,356,359):
+              wmo = 61
+          elif code in (179,182,185,227,230,323,326,329,332,335,338,350,362,365,368,371,374,377):
+              wmo = 71
+          elif code in (200,386,389,392,395):
+              wmo = 95
+          else:
+              wmo = 3
+
+          result = {
+              'latitude': 61.0042,
+              'longitude': 69.0019,
+              'timezone': 'Asia/Yekaterinburg',
+              'generated_at': datetime.now(timezone.utc).isoformat(),
+              'source_current': 'wttr.in',
+              'source_forecast': 'open-meteo',
+              'current': {
+                  'temperature_2m': float(c['temp_C']),
+                  'apparent_temperature': float(c['FeelsLikeC']),
+                  'relative_humidity_2m': int(c['humidity']),
+                  'wind_speed_10m': float(c['windspeedKmph']),
+                  'weather_code': wmo
+              },
+              'daily': o['daily']
+          }
+
+          with open('weather.json', 'w', encoding='utf-8') as f:
+              json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
+          PY
+
+          rm -f wttr.json forecast.json
+
       - name: Publish weather data
         run: |
           git config user.name 'github-actions[bot]'
