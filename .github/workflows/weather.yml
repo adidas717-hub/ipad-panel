@@ -3,103 +3,65 @@ name: Update weather
 on:
   workflow_dispatch:
   schedule:
-    - cron: '3,18,33,48 * * * *'
+    - cron: '7,22,37,52 * * * *'
 
 permissions:
   contents: write
 
 concurrency:
   group: ipad-weather-update
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   weather:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Build fresh Khanty-Mansiysk weather
         shell: bash
         run: |
           set -euo pipefail
-
-          # Forecast and sun times.
           curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 \
-            -H 'Cache-Control: no-cache' \
             'https://api.open-meteo.com/v1/forecast?latitude=61.0042&longitude=69.0019&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FYekaterinburg&forecast_days=5' \
             -o /tmp/forecast.json
 
-          # Current conditions. Exact coordinates avoid selecting another city.
-          # Failure is allowed: we publish nulls so the panel can show --°.
-          if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 \
-            -A 'ipad-panel/1.0' \
-            'https://wttr.in/61.0042,69.0019?format=j1' \
-            -o /tmp/current.json; then
-            echo 'Current weather downloaded.'
+          if curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 35 \
+            -A 'Mozilla/5.0 ipad-panel-weather' \
+            'https://wttr.in/61.0042,69.0019?format=j1' -o /tmp/current.json; then
+            echo 'wttr.in OK'
           else
-            echo '{}'>/tmp/current.json
-            echo 'Current weather unavailable; publishing empty current values.'
+            echo '{}' > /tmp/current.json
+            echo 'wttr.in unavailable'
           fi
 
           python3 - <<'PY'
           import json
           from datetime import datetime, timezone
-
-          with open('/tmp/forecast.json', encoding='utf-8') as f:
-              forecast = json.load(f)
-          with open('/tmp/current.json', encoding='utf-8') as f:
-              raw = json.load(f)
-
-          rows = raw.get('current_condition') or []
-          c = rows[0] if rows else {}
-          required = ('temp_C', 'FeelsLikeC', 'humidity', 'windspeedKmph')
-          valid = all(c.get(k) not in (None, '') for k in required)
-
+          with open('/tmp/forecast.json', encoding='utf-8') as f: forecast=json.load(f)
+          with open('/tmp/current.json', encoding='utf-8') as f: raw=json.load(f)
+          rows=raw.get('current_condition') or []
+          c=rows[0] if rows else {}
+          valid=all(c.get(k) not in (None,'') for k in ('temp_C','FeelsLikeC','humidity','windspeedKmph'))
           if valid:
-              code = int(c.get('weatherCode', 122))
-              if code == 113: wmo = 0
-              elif code == 116: wmo = 2
-              elif code in (119,122,143,248,260): wmo = 3
-              elif code in (176,263,266,281,284,293,296,299,302,305,308,311,314,317,320,353,356,359): wmo = 61
-              elif code in (179,182,185,227,230,323,326,329,332,335,338,350,362,365,368,371,374,377): wmo = 71
-              elif code in (200,386,389,392,395): wmo = 95
-              else: wmo = 3
-              current = {
-                  'temperature_2m': float(c['temp_C']),
-                  'apparent_temperature': float(c['FeelsLikeC']),
-                  'relative_humidity_2m': int(float(c['humidity'])),
-                  'wind_speed_10m': float(c['windspeedKmph']),
-                  'weather_code': wmo
-              }
-              source = 'wttr.in'
+              wc=int(c.get('weatherCode',122))
+              if wc==113: wmo=0
+              elif wc==116: wmo=2
+              elif wc in (119,122,143,248,260): wmo=3
+              elif wc in (179,182,185,227,230,323,326,329,332,335,338,350,362,365,368,371,374,377): wmo=71
+              elif wc in (200,386,389,392,395): wmo=95
+              else: wmo=61
+              current={'temperature_2m':float(c['temp_C']),'apparent_temperature':float(c['FeelsLikeC']),'relative_humidity_2m':int(float(c['humidity'])),'wind_speed_10m':float(c['windspeedKmph']),'weather_code':wmo}
+              source='wttr.in'
           else:
-              current = {
-                  'temperature_2m': None,
-                  'apparent_temperature': None,
-                  'relative_humidity_2m': None,
-                  'wind_speed_10m': None,
-                  'weather_code': None
-              }
-              source = 'unavailable'
-
-          result = {
-              'latitude': 61.0042,
-              'longitude': 69.0019,
-              'timezone': 'Asia/Yekaterinburg',
-              'generated_at': datetime.now(timezone.utc).isoformat(),
-              'max_age_minutes': 35,
-              'source_current': source,
-              'source_forecast': 'open-meteo',
-              'current': current,
-              'daily': forecast.get('daily', {})
-          }
-
-          with open('weather.json', 'w', encoding='utf-8') as f:
-              json.dump(result, f, ensure_ascii=False, separators=(',', ':'))
-
-          print('Source:', source)
-          print('Temperature:', current['temperature_2m'])
+              current={'temperature_2m':None,'apparent_temperature':None,'relative_humidity_2m':None,'wind_speed_10m':None,'weather_code':None}
+              source='unavailable'
+          out={'latitude':61.0042,'longitude':69.0019,'timezone':'Asia/Yekaterinburg','generated_at':datetime.now(timezone.utc).isoformat(),'max_age_minutes':35,'source_current':source,'source_forecast':'open-meteo','current':current,'daily':forecast.get('daily',{})}
+          with open('weather.json','w',encoding='utf-8') as f: json.dump(out,f,ensure_ascii=False,separators=(',',':'))
+          print('source_current=',source,'temperature=',current['temperature_2m'])
           PY
 
       - name: Validate weather JSON
@@ -108,14 +70,13 @@ jobs:
           test -s weather.json
 
       - name: Publish weather data
+        shell: bash
         run: |
+          set -e
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add weather.json
-          if git diff --cached --quiet; then
-            echo 'No weather changes to publish.'
-            exit 0
-          fi
+          git diff --cached --quiet && exit 0
           git commit -m 'Update weather data'
           git pull --rebase origin main
-          git push
+          git push origin HEAD:main
