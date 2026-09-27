@@ -2,7 +2,7 @@ name: Update weather
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/30 * * * *'
+    - cron: '*/10 * * * *'
 permissions:
   contents: write
 jobs:
@@ -10,13 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Download Khanty-Mansiysk weather
+      - name: Download fresh Khanty-Mansiysk weather
         run: |
-          curl -fsSL --retry 3 'https://api.open-meteo.com/v1/forecast?latitude=61.0042&longitude=69.0019&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FYekaterinburg&forecast_days=5' -o weather.json
+          curl -fsSL --retry 3 --connect-timeout 15 -H 'Cache-Control: no-cache' 'https://api.open-meteo.com/v1/forecast?latitude=61.0042&longitude=69.0019&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset&timezone=Asia%2FYekaterinburg&forecast_days=5' -o weather.json
       - name: Publish weather data
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add weather.json
           git diff --cached --quiet || git commit -m 'Update weather data'
+          git pull --rebase origin main
           git push
