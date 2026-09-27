@@ -2,6 +2,9 @@ name: Update weather
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/weather.yml'
   schedule:
     - cron: '7,22,37,52 * * * *'
 
